@@ -29,6 +29,10 @@ from nn import utils
 
 class NNTestCase(unittest.TestCase):
 
+    def __init__(self, *args, **kwargs):
+        super(NNTestCase, self).__init__(*args, **kwargs)
+        sys.stdout = sys.__stdout__
+
     def get_random_XY(self, hidden_layer_sizes=None):
         num_rows = 500
         num_feats = 100
@@ -65,6 +69,89 @@ class NNTestCase(unittest.TestCase):
             Y[i][val] = True
         return X, Y
 
+    def get_addition(self, sample_size=100, num_bits=8, dtype=np.uint8, labelled=False):
+
+        def sample_Y():
+            return np.random.randint(0, 2**num_bits)
+
+        def get_X(y):
+            if y == 0:
+                return 0, 0
+            a = np.random.randint(0, y)
+            b = y - a
+            return a, b
+
+        def binarize(int_tuple, label_inst=True):
+            if label_inst:
+                r = np.unpackbits(np.array(int_tuple, dtype=dtype)).astype(np.float32)
+                r = r * 2.0 - 1.0
+            else:
+                r = np.zeros(shape=len(int_tuple) * 2 ** num_bits, dtype=np.float32)
+                r -= 1.0
+                for offset, value in enumerate(int_tuple):
+                    position = offset * 2**num_bits + value
+                    r[position] = 1.0
+            return r
+
+        Y = []
+        X = []
+        for i in xrange(sample_size):
+            y = sample_Y()
+            x = get_X(y)
+            X.append(binarize(x, label_inst=True))
+            Y.append(binarize((y,), label_inst=labelled))
+
+        X = np.array(X)
+        Y = np.array(Y)
+
+        return X, Y
+
+    def bit_addition(self, x, num_bits=8, dtype=np.uint8, labelled=False):
+        z = ((x + 1) / 2).astype(np.uint8)
+        y = np.sum(np.packbits(z))
+        if labelled:
+            y = np.unpackbits(dtype(y))
+            return y * 2.0 - 1.0
+        else:
+            r = np.zeros(shape=2**num_bits, dtype=np.float32)
+            r -= 1.0
+            r[y] = 1.0
+            return r
+
+    # @unittest.skip("ignore")
+    def test_addition_ff(self):
+
+        sys.stdout = sys.__stdout__
+
+        sample_size = 10000
+        X, Y = self.get_addition(sample_size=sample_size)
+
+        for i in range(sample_size):
+            y_0 = self.bit_addition(X[i])
+            np.allclose(Y[i], y_0)
+
+        Y = ((Y + 1) / 2).astype(np.bool)
+
+        data = Data(X, Y, ho_frac=0)
+        model = FeedForward(data,
+                            param_scale=0.01,
+                            hidden_activation=activations.relu,
+                            output_activation=activations.softmax,
+                            hidden_layer_sizes=[64],
+                            # dropout_rate=0.05,
+                            )
+        inference = SGD(model, data,
+                        batch_size=1000,
+                        learning_rate=1e-3,
+                        momentum=0.9,)
+        task = SGDFeedForwardTask(data, model, inference)
+        task.inference.quick_loss_check()
+        # task.inference.quick_grad_check()
+        task.print_perf("errors")
+        while True:
+            task.iterate()
+            task.print_perf("errors")
+
     @unittest.skip("ignore")
     def test_iris_multilabel(self):
         X, Y = self.get_iris(num_classes=10)
@@ -99,7 +186,7 @@ class NNTestCase(unittest.TestCase):
             task.iterate()
             task.print_perf("errors")
 
-    # @unittest.skip("ignore")
+    @unittest.skip("ignore")
     def test_iris_ff(self):
         X, Y = self.get_iris(num_classes=10)
 
@@ -107,7 +194,7 @@ class NNTestCase(unittest.TestCase):
         # Y = Y*2 - 1
 
         data = Data(X, Y, ho_frac=0)
-        data.split()
+        # data.split()
 
         # U, S, V = preprocessing.SVD(data.X_train)
 
